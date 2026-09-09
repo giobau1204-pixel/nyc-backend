@@ -124,6 +124,14 @@ def obtener_esquema() -> str:
         "Nota: las columnas de tipo USER-DEFINED son 'geometry' (PostGIS). "
         "Para coordenadas legibles usa ST_AsText(geom) o ST_X/ST_Y con ST_Centroid(geom)."
     )
+    lineas.append("")
+    lineas.append(
+        "IMPORTANTE: NO existen tablas separadas para 'población', 'demografía' ni "
+        "similares. Los datos de población (total, por raza/etnia) están DENTRO de "
+        "la tabla nyc_census_blocks, en las columnas popn_total, popn_white, "
+        "popn_black, popn_asian, popn_other, popn_nativ. Nunca inventes un nombre "
+        "de tabla como 'nyc_population' o 'population' — no existe."
+    )
     return "\n".join(lineas)
 
 
@@ -259,21 +267,41 @@ def consulta(datos: Pregunta):
     lo ejecuta y devuelve tanto el SQL generado como los resultados.
 
     Si la IA usa un nombre de tabla que no existe (le pasa ocasionalmente,
-    aunque el esquema esté bien armado), se reintenta UNA vez más antes
-    de darse por vencido, recordándole explícitamente los nombres válidos.
+    aunque el esquema esté bien armado), se reintenta hasta 2 veces más
+    (3 intentos en total), validando CADA intento antes de ejecutarlo.
+    Si ninguno funciona, se devuelve un error claro en vez de ejecutar
+    SQL que sabemos que va a fallar.
     """
     try:
-        sql_generado = preguntar_a_ia(datos.pregunta)
+        pregunta_actual = datos.pregunta
+        sql_generado = None
 
-        # Si el SQL usa una tabla que no existe, reintentamos una vez con
-        # un recordatorio extra de cuáles son los nombres reales.
-        if not sql_usa_tablas_validas(sql_generado):
-            pregunta_corregida = (
+        for intento in range(3):
+            sql_generado = preguntar_a_ia(pregunta_actual)
+
+            if sql_usa_tablas_validas(sql_generado):
+                break  # este intento usa tablas reales, seguimos con este SQL
+
+            # Si no es válido, preparamos un recordatorio más fuerte para el
+            # siguiente intento (incluyendo qué tabla inventada usó, para que
+            # la IA entienda su propio error).
+            tablas_usadas = extraer_tablas_usadas(sql_generado)
+            pregunta_actual = (
                 f"{datos.pregunta}\n\n"
-                f"(Recuerda: los ÚNICOS nombres de tabla válidos son exactamente estos: "
-                f"{sorted(TABLAS_VALIDAS)}. No uses ninguna variación ni abreviación.)"
+                f"(Tu intento anterior usó la tabla inexistente {sorted(tablas_usadas)}. "
+                f"Los ÚNICOS nombres de tabla válidos son exactamente: "
+                f"{sorted(TABLAS_VALIDAS)}. Revisa bien a qué tabla real pertenece "
+                f"el dato que se pide antes de responder.)"
             )
-            sql_generado = preguntar_a_ia(pregunta_corregida)
+        else:
+            # Se agotaron los 3 intentos y ninguno usó una tabla válida.
+            return {
+                "error": (
+                    "No logré identificar en qué tabla está esa información. "
+                    "Intenta reformular la pregunta mencionando barrios, calles, "
+                    "estaciones de metro, homicidios o población."
+                )
+            }
 
         resultados = ejecutar_sql(sql_generado)
         return {
