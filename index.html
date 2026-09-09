@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Consultas NYC 🚇</title>
+<style>
+  :root {
+    --rojo-fondo: #fff5f5;
+    --rojo-suave: #ffcccc;
+    --rojo-intenso: #b30000;
+    --rojo-oscuro: #8b0000;
+    --gris-suave: #6b6b62;
+    --azul-mta: #0039a6;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: linear-gradient(to bottom right, var(--rojo-fondo), var(--rojo-suave));
+    color: var(--rojo-oscuro);
+    font-family: "Georgia", "Times New Roman", serif;
+    line-height: 1.5;
+  }
+
+  header {
+    background: linear-gradient(to right, var(--rojo-intenso), #ff6666);
+    color: white;
+    padding: 28px 24px 20px;
+    max-width: 760px;
+    margin: 0 auto;
+    border-radius: 0 0 8px 8px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  }
+
+  header .rotulo {
+    display: inline-block;
+    background: var(--azul-mta);
+    color: white;
+    font-family: Arial, Helvetica, sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.02em;
+    padding: 3px 9px;
+    border-radius: 3px;
+    margin-bottom: 10px;
+  }
+
+  h1 {
+    font-size: 32px;
+    margin: 0 0 6px;
+    font-weight: 400;
+  }
+
+  header p {
+    font-family: Arial, Helvetica, sans-serif;
+    color: #ffecec;
+    font-size: 14px;
+    margin: 0;
+    max-width: 52ch;
+  }
+
+  main {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 28px 24px 60px;
+  }
+
+  .caja-pregunta {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+
+  #pregunta {
+    flex: 1;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 15px;
+    padding: 12px 14px;
+    border: 2px solid var(--rojo-intenso);
+    border-radius: 4px;
+    background: white;
+    color: var(--rojo-oscuro);
+  }
+
+  #pregunta:focus {
+    outline: 3px solid var(--rojo-intenso);
+    outline-offset: 1px;
+  }
+
+  button {
+    font-family: Arial, Helvetica, sans-serif;
+    font-weight: 700;
+    font-size: 14px;
+    padding: 0 22px;
+    background: var(--rojo-intenso);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: transform 0.1s ease-in-out;
+  }
+
+  button:hover {
+    transform: scale(1.05);
+    background: var(--rojo-oscuro);
+  }
+
+  button:disabled {
+    background: var(--gris-suave);
+    cursor: default;
+    transform: none;
+  }
+
+  .sugerencias {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 12.5px;
+    color: var(--gris-suave);
+    margin: 0 0 30px;
+  }
+
+  .sugerencias button.chip {
+    font-weight: 400;
+    background: none;
+    color: var(--azul-mta);
+    border: 1px solid #d8d4c8;
+    border-radius: 20px;
+    padding: 4px 12px;
+    margin: 4px 6px 0 0;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+
+  .sugerencias button.chip:hover { border-color: var(--azul-mta); }
+
+  #estado {
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 13.5px;
+    color: var(--gris-suave);
+    min-height: 20px;
+    margin-bottom: 10px;
+  }
+
+  #estado.error { color: #a3271e; }
+
+  .sql-box {
+    font-family: "Courier New", monospace;
+    font-size: 13px;
+    background: #fff0f0;
+    border-left: 4px solid var(--rojo-intenso);
+    padding: 10px 14px;
+    margin-bottom: 22px;
+    white-space: pre-wrap;
+    display: none;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 14px;
+  }
+
+  thead th {
+    text-align: left;
+    border-bottom: 2px solid var(--rojo-intenso);
+    padding: 8px 10px;
+    font-weight: 700;
+  }
+
+  tbody td {
+    padding: 7px 10px;
+    border-bottom: 1px solid #d8d4c8;
+  }
+
+  tbody tr:hover { background: #ffe5e5; }
+
+  #vacio {
+    font-family: Arial, Helvetica, sans-serif;
+    color: var(--gris-suave);
+    font-size: 14px;
+    display: none;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="rotulo">NYC · DATOS ESPACIALES</span>
+  <h1>⚒️🚇 Pregúntale a la base de datos ⚒️</h1>
+  <p>Escribe una pregunta en lenguaje natural sobre homicidios, barrios, calles o estaciones de metro de Nueva York. La consulta SQL se genera automáticamente.</p>
+</header>
+
+<main>
+  <div class="caja-pregunta">
+    <input type="text" id="pregunta" placeholder="ej: cuántos homicidios hay por barrio" autocomplete="off">
+    <button id="btnPreguntar" onclick="preguntar()">Preguntar</button>
+  </div>
+
+  <div class="sugerencias">
+    Prueba:
+    <button class="chip" onclick="usarSugerencia(this)">homicidios por barrio</button>
+    <button class="chip" onclick="usarSugerencia(this)">calles del tipo autopista (motorway)</button>
+    <button class="chip" onclick="usarSugerencia(this)">estaciones de metro en Manhattan</button>
+    <button class="chip" onclick="usarSugerencia(this)">población total por barrio</button>
+  </div>
+
+  <div id="estado"></div>
+  <div class="sql-box" id="sqlBox"></div>
+  <div id="vacio">Sin resultados para esta pregunta.</div>
+
+  <table id="tabla" style="display:none;">
+    <thead><tr id="filaEncabezado"></tr></thead>
+    <tbody id="cuerpoTabla"></tbody>
+  </table>
+</main>
+
+<script>
+  const URL_BACKEND = "https://fang-subduing-motor.ngrok-free.dev/consulta";
+
+  const input = document.getElementById("pregunta");
+  const btn = document.getElementById("btnPreguntar");
+  const estado = document.getElementById("estado");
+  const sqlBox = document.getElementById("sqlBox");
+  const tabla = document.getElementById("tabla");
+  const filaEncabezado = document.getElementById("filaEncabezado");
+  const cuerpoTabla = document.getElementById("cuerpoTabla");
+  const vacio = document.getElementById("vacio");
+
+  function usarSugerencia(el) {
+    input.value = el.textContent;
+    preguntar();
+  }
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") preguntar();
+  });
+
+  async function preguntar() {
+    const pregunta = input.value.trim();
+    if (!pregunta) return;
+
+    btn.disabled = true;
+    btn.textContent = "Consultando…";
+    estado.textContent = "";
+    estado.className = "";
+    sqlBox.style.display = "none";
+    tabla.style.display = "none";
+    vacio.style.display = "none";
+
+    try {
+      const resp = await fetch(URL_BACKEND, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pregunta }),
+      });
+      const data = await resp.json();
+
+      if (data.error) {
+        estado.textContent = "No se pudo resolver la pregunta: " + data.error;
+        estado.className = "error";
+        return;
+      }
+
+      sqlBox.textContent = data.sql_generado;
+      sqlBox.style.display = "block";
+
+      const filas = data.resultados || [];
+      if (filas.length === 0) {
+        vacio.style.display = "block";
+        return;
+      }
+
+      const columnas = Object.keys(filas[0]);
+      filaEncabezado.innerHTML = columnas.map(c => `<th>${c}</th>`).join("");
+      cuerpoTabla.innerHTML = filas.map(fila =>
+        "<tr>" + columnas.map(c => `<td>${fila[c] ?? ""}</td>`).join("") + "</tr>"
+      ).join("");
+
+      tabla.style.display = "table";
+      estado.textContent = `${filas.length} resultado(s)`;
+    } catch (err) {
+      estado.textContent = "No se pudo conectar con el servidor. ¿Está corriendo uvicorn?";
+      estado.className = "error";
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Preguntar";
+    }
+  }
+</script>
+
+</body>
+</html>
