@@ -1,4 +1,4 @@
-""""
+"""
 BACKEND: Texto -> SQL -> Resultados
 ------------------------------------
 Flujo general:
@@ -36,13 +36,15 @@ app.add_middleware(
 )
 
 # Credenciales de conexión a PostgreSQL, leídas desde el .env
+# sslmode="require": Neon (y la mayoría de Postgres en la nube) exige conexión
+# cifrada (SSL); sin esto, la conexión falla aunque las credenciales sean correctas.
 DB_CONFIG = {
     "dbname": os.getenv("DB_NAME"),
     "user": os.getenv("DB_USER"),
     "password": os.getenv("DB_PASSWORD"),
     "host": os.getenv("DB_HOST"),
+    "sslmode": "require",
     "port": os.getenv("DB_PORT"),
-    "sslmode": "require"
 }
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -81,9 +83,19 @@ def obtener_esquema() -> str:
             continue
         tablas.setdefault(tabla, []).append((columna, tipo))
 
+    # Guardamos los nombres reales de tabla en una variable global, para poder
+    # validar más adelante si el SQL que genera la IA usa nombres inventados.
+    global TABLAS_VALIDAS
+    TABLAS_VALIDAS = set(tablas.keys())
+
     # Arma un texto legible tipo: nombre_tabla(columna1 (tipo), columna2 (tipo), ...)
     # y, para columnas de texto, agrega ejemplos de valores REALES ya guardados.
-    lineas = ["Tablas disponibles en la base de datos (PostgreSQL + PostGIS):", ""]
+    lineas = [
+        "Tablas disponibles en la base de datos (PostgreSQL + PostGIS). "
+        "USA EXACTAMENTE estos nombres de tabla, letra por letra, nunca los abrevies "
+        f"ni les quites el prefijo 'nyc_': {sorted(tablas.keys())}",
+        "",
+    ]
     with psycopg.connect(**DB_CONFIG) as conn:
         with conn.cursor() as cur:
             for tabla, columnas in tablas.items():
@@ -114,6 +126,10 @@ def obtener_esquema() -> str:
     )
     return "\n".join(lineas)
 
+
+# Se llena dentro de obtener_esquema() con los nombres reales de tabla,
+# para poder validar el SQL que devuelva la IA antes de ejecutarlo.
+TABLAS_VALIDAS = set()
 
 # Se calcula UNA sola vez, al arrancar el servidor (no en cada pregunta),
 # para no golpear la base de datos innecesariamente.
@@ -211,6 +227,29 @@ def ejecutar_sql(sql: str):
 
 
 # ---------------------------------------------------------------------------
+# BLOQUE 5.5: Validar que el SQL generado use nombres de tabla reales
+# ---------------------------------------------------------------------------
+import re
+
+def extraer_tablas_usadas(sql: str) -> set:
+    """
+    Busca en el SQL qué tablas se mencionan después de FROM o JOIN.
+    Es una búsqueda simple (no un parser completo de SQL), pero suficiente
+    para detectar si la IA inventó o abrevió un nombre de tabla.
+    """
+    encontradas = re.findall(r'(?:FROM|JOIN)\s+"?(\w+)"?', sql, flags=re.IGNORECASE)
+    return set(encontradas)
+
+
+def sql_usa_tablas_validas(sql: str) -> bool:
+    """True si todas las tablas mencionadas en el SQL existen realmente."""
+    usadas = extraer_tablas_usadas(sql)
+    if not usadas:
+        return True  # si no detectamos ninguna (raro), no bloqueamos por esto
+    return usadas.issubset(TABLAS_VALIDAS)
+
+
+# ---------------------------------------------------------------------------
 # BLOQUE 6: Endpoints (las "puertas de entrada" que la página web va a llamar)
 # ---------------------------------------------------------------------------
 @app.post("/consulta")
@@ -218,9 +257,24 @@ def consulta(datos: Pregunta):
     """
     Endpoint principal: recibe la pregunta en texto, la convierte en SQL,
     lo ejecuta y devuelve tanto el SQL generado como los resultados.
+
+    Si la IA usa un nombre de tabla que no existe (le pasa ocasionalmente,
+    aunque el esquema esté bien armado), se reintenta UNA vez más antes
+    de darse por vencido, recordándole explícitamente los nombres válidos.
     """
     try:
         sql_generado = preguntar_a_ia(datos.pregunta)
+
+        # Si el SQL usa una tabla que no existe, reintentamos una vez con
+        # un recordatorio extra de cuáles son los nombres reales.
+        if not sql_usa_tablas_validas(sql_generado):
+            pregunta_corregida = (
+                f"{datos.pregunta}\n\n"
+                f"(Recuerda: los ÚNICOS nombres de tabla válidos son exactamente estos: "
+                f"{sorted(TABLAS_VALIDAS)}. No uses ninguna variación ni abreviación.)"
+            )
+            sql_generado = preguntar_a_ia(pregunta_corregida)
+
         resultados = ejecutar_sql(sql_generado)
         return {
             "pregunta": datos.pregunta,
