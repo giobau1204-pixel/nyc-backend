@@ -22,7 +22,7 @@ import psycopg
 # ---------------------------------------------------------------------------
 # Carga las variables del archivo .env (credenciales de la base y API key de Groq)
 # para no dejarlas escritas directamente en el código.
-load_dotenv()
+load_dotenv(override=True)
 
 app = FastAPI()
 
@@ -50,6 +50,8 @@ DB_CONFIG = {
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
+print(">>> Conectando a base de datos:", DB_CONFIG.get("dbname"), "en host:", DB_CONFIG.get("host"))
+
 # Tablas internas de PostGIS que NO queremos mostrarle a la IA
 # (son metadatos del sistema, no datos de NY que el usuario vaya a consultar).
 TABLAS_A_IGNORAR = {"geography_columns", "geometry_columns", "spatial_ref_sys"}
@@ -73,8 +75,15 @@ def obtener_esquema() -> str:
     """
     with psycopg.connect(**DB_CONFIG) as conn:
         with conn.cursor() as cur:
+            cur.execute("SELECT current_database(), current_user, current_schema();")
+            print(">>> Sesión real de conexión (base, usuario, schema):", cur.fetchone())
+
             cur.execute(query)
             filas = cur.fetchall()
+
+    print(">>> Filas crudas obtenidas de information_schema:", len(filas))
+    if filas:
+        print(">>> Primeras 3 filas:", filas[:3])
 
     # Agrupa las columnas por tabla, ignorando las tablas internas de PostGIS
     tablas = {}
@@ -142,6 +151,7 @@ TABLAS_VALIDAS = set()
 # Se calcula UNA sola vez, al arrancar el servidor (no en cada pregunta),
 # para no golpear la base de datos innecesariamente.
 ESQUEMA = obtener_esquema()
+print("\n>>> TABLAS_VALIDAS detectadas al arrancar:", TABLAS_VALIDAS, "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -250,11 +260,18 @@ def extraer_tablas_usadas(sql: str) -> set:
 
 
 def sql_usa_tablas_validas(sql: str) -> bool:
-    """True si todas las tablas mencionadas en el SQL existen realmente."""
-    usadas = extraer_tablas_usadas(sql)
+    """
+    True solo si el SQL menciona al menos una tabla real y TODAS las que
+    menciona existen. Si no se detecta ninguna tabla (ej: un SELECT sin
+    FROM, como un placeholder inválido que a veces devuelve la IA cuando
+    se confunde), lo tratamos como INVÁLIDO — no como válido por defecto,
+    que era el bug anterior.
+    """
+    usadas = {t.lower() for t in extraer_tablas_usadas(sql)}
     if not usadas:
-        return True  # si no detectamos ninguna (raro), no bloqueamos por esto
-    return usadas.issubset(TABLAS_VALIDAS)
+        return False
+    validas_lower = {t.lower() for t in TABLAS_VALIDAS}
+    return usadas.issubset(validas_lower)
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +295,9 @@ def consulta(datos: Pregunta):
 
         for intento in range(3):
             sql_generado = preguntar_a_ia(pregunta_actual)
+            print(f"\n--- Intento {intento + 1} ---")
+            print("SQL generado:", sql_generado)
+            print("¿Tablas válidas?:", sql_usa_tablas_validas(sql_generado))
 
             if sql_usa_tablas_validas(sql_generado):
                 break  # este intento usa tablas reales, seguimos con este SQL
